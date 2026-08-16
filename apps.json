@@ -1,0 +1,19 @@
+{
+  "name": "MacroPulse Repo",
+  "identifier": "com.macropulse.source",
+  "apps": [
+    {
+      "name": "MacroPulse Pro",
+      "bundleIdentifier": "com.macropulse.tracker",
+      "developerName": "Your Name",
+      "version": "1.0.0",
+      "versionDate": "2026-08-16",
+      "versionDescription": "Initial release",
+      "downloadURL": "https://github.com/YOUR_USERNAME/macropulse-ios/releases/latest/download/MacroPulse.ipa",
+      "localizedDescription": "Calorie and macro tracking app built with AI Studio.",
+      "iconURL": "https://raw.githubusercontent.com/YOUR_USERNAME/macropulse-ios/main/macropulse---pro-calorie-%26-macro-tracker/icon.png",
+      "tintColor": "#007AFF",
+      "size": 5000000
+    }
+  ]
+}
