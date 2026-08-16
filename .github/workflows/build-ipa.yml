@@ -17,6 +17,11 @@ jobs:
 
       - name: Build Web App and Setup iOS
         run: |
+          # Find the folder containing package.json and navigate into it
+          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
+          cd "$TARGET_DIR"
+          echo "Working in directory: $(pwd)"
+
           npm install
           npm run build
           npm install @capacitor/core @capacitor/cli @capacitor/ios
@@ -25,6 +30,9 @@ jobs:
 
       - name: Compile Xcode Archive
         run: |
+          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
+          cd "$TARGET_DIR"
+
           xcodebuild archive \
             -workspace ios/App/App.xcworkspace \
             -scheme App \
@@ -36,6 +44,9 @@ jobs:
 
       - name: Package to IPA
         run: |
+          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
+          cd "$TARGET_DIR"
+
           mkdir -p build/Payload
           cp -r build/App.xcarchive/Products/Applications/App.app build/Payload/
           cd build
@@ -45,4 +56,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MacroPulse-Unsigned-IPA
-          path: build/MacroPulse.ipa
+          path: "**/build/MacroPulse.ipa"
