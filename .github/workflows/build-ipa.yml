@@ -13,19 +13,26 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Build Web App and Setup iOS
         run: |
-          # Find the folder containing package.json and navigate into it
           TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
           cd "$TARGET_DIR"
           echo "Working in directory: $(pwd)"
 
+          # 1. Install & Build Web Assets
           npm install
           npm run build
+
+          # 2. Add Capacitor iOS
           npm install @capacitor/core @capacitor/cli @capacitor/ios
           npx cap add ios
+
+          # 3. Patch Podfile Deployment Target to iOS 16.0
+          sed -i '' "s/platform :ios, '.*'/platform :ios, '16.0'/g" ios/App/Podfile
+
+          # 4. Sync iOS Native Dependencies
           npx cap sync ios
 
       - name: Compile Xcode Archive
