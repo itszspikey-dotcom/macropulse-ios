@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build Web App and Compile iOS IPA
+      - name: Build Web App and Generate Assets
         run: |
           TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
           cd "$TARGET_DIR"
@@ -25,12 +25,24 @@ jobs:
           npm install
           npm run build
 
-          # 2. Add & Sync Capacitor iOS
-          npm install @capacitor/core @capacitor/cli @capacitor/ios
+          # 2. Add Capacitor iOS
+          npm install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/assets
           npx cap add ios
+
+          # 3. Auto-generate iOS app icons from icon.png if present
+          if [ -f "icon.png" ]; then
+            mkdir -p assets
+            cp icon.png assets/icon-only.png
+            npx @capacitor/assets generate --ios
+          fi
+
           npx cap sync ios
 
-          # 3. Compile Xcode Archive (.xcodeproj for SPM)
+      - name: Compile Xcode Archive
+        run: |
+          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
+          cd "$TARGET_DIR"
+
           xcodebuild archive \
             -project ios/App/App.xcodeproj \
             -scheme App \
@@ -41,7 +53,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-          # 4. Package to IPA
+      - name: Package to IPA
+        run: |
+          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
+          cd "$TARGET_DIR"
+
           mkdir -p build/Payload
           cp -r build/App.xcarchive/Products/Applications/App.app build/Payload/
           cd build
