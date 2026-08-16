@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build Web App and Setup iOS
+      - name: Build Web App and Compile iOS IPA
         run: |
           TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
           cd "$TARGET_DIR"
@@ -25,18 +25,14 @@ jobs:
           npm install
           npm run build
 
-          # 2. Add Capacitor iOS (Swift Package Manager)
+          # 2. Add & Sync Capacitor iOS
           npm install @capacitor/core @capacitor/cli @capacitor/ios
           npx cap add ios
           npx cap sync ios
 
-      - name: Compile Xcode Archive
-        run: |
-          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
-          cd "$TARGET_DIR"
-
+          # 3. Compile Xcode Archive (.xcodeproj for SPM)
           xcodebuild archive \
-            -workspace ios/App/App.xcworkspace \
+            -project ios/App/App.xcodeproj \
             -scheme App \
             -destination "generic/platform=iOS" \
             -configuration Release \
@@ -45,11 +41,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Package to IPA
-        run: |
-          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
-          cd "$TARGET_DIR"
-
+          # 4. Package to IPA
           mkdir -p build/Payload
           cp -r build/App.xcarchive/Products/Applications/App.app build/Payload/
           cd build
