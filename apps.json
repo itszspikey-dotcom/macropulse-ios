@@ -6,12 +6,12 @@
       "name": "MacroPulse Pro",
       "bundleIdentifier": "com.macropulse.tracker",
       "developerName": "Your Name",
-      "version": "1.0.0",
-      "versionDate": "2026-08-16",
-      "versionDescription": "Initial release",
-      "downloadURL": "https://github.com/YOUR_USERNAME/macropulse-ios/releases/latest/download/MacroPulse.ipa",
+      "version": "1.1.0",
+      "versionDate": "2026-08-18",
+      "versionDescription": "Adds mobile bottom nav, profile management, theming, weight objectives, and direct on-device Gemini AI food scanning.",
+      "downloadURL": "https://github.com/itszspikey-dotcom/macropulse-ios/releases/latest/download/MacroPulse.ipa",
       "localizedDescription": "Calorie and macro tracking app built with AI Studio.",
-      "iconURL": "https://raw.githubusercontent.com/YOUR_USERNAME/macropulse-ios/main/macropulse---pro-calorie-%26-macro-tracker/icon.png",
+      "iconURL": "https://raw.githubusercontent.com/itszspikey-dotcom/macropulse-ios/main/macropulse---pro-calorie-%26-macro-tracker/icon.png",
       "tintColor": "#007AFF",
       "size": 5000000
     }

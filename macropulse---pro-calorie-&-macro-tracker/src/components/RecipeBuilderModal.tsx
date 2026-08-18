@@ -24,6 +24,13 @@ interface RecipeBuilderModalProps {
   onRecipeSaved: (recipe: Recipe) => void;
 }
 
+interface DraftIngredient {
+  foodItem: FoodItem;
+  amount: number | string;
+  unit: ServingUnit;
+  gramWeight: number;
+}
+
 export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
   isOpen,
   onClose,
@@ -33,8 +40,8 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
 
   const [recipeName, setRecipeName] = useState('');
   const [description, setDescription] = useState('');
-  const [servings, setServings] = useState<number>(2);
-  const [ingredients, setIngredients] = useState<RecipeIngredient[]>([]);
+  const [servings, setServings] = useState<number | string>(2);
+  const [ingredients, setIngredients] = useState<DraftIngredient[]>([]);
 
   // Ingredient search state
   const [isSearchingIngredient, setIsSearchingIngredient] = useState(false);
@@ -49,7 +56,8 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
   let totalFiber = 0;
 
   ingredients.forEach((ing) => {
-    const computed = computeNutritionForPortion(ing.foodItem, ing.amount, ing.unit);
+    const numAmt = typeof ing.amount === 'number' ? ing.amount : parseFloat(ing.amount) || 0;
+    const computed = computeNutritionForPortion(ing.foodItem, numAmt, ing.unit);
     totalWeightG += computed.servingGramWeight;
     totalCalories += computed.calories;
     totalProtein += computed.protein;
@@ -58,7 +66,8 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
     totalFiber += computed.fiber;
   });
 
-  const servCount = Math.max(1, servings || 1);
+  const parsedServings = typeof servings === 'number' ? servings : parseInt(servings, 10) || 1;
+  const servCount = Math.max(1, parsedServings);
   const perServingCalories = roundCalories(totalCalories / servCount);
   const perServingProtein = roundMacro(totalProtein / servCount);
   const perServingCarbs = roundMacro(totalCarbs / servCount);
@@ -85,13 +94,14 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
 
   const handleUpdateIngredient = (
     index: number,
-    amount: number,
+    amount: number | string,
     unit: ServingUnit
   ) => {
     setIngredients((prev) => {
       const copy = [...prev];
       const target = copy[index];
-      const computed = computeNutritionForPortion(target.foodItem, amount, unit);
+      const numAmt = typeof amount === 'number' ? amount : parseFloat(amount) || 0;
+      const computed = computeNutritionForPortion(target.foodItem, numAmt, unit);
       copy[index] = {
         ...target,
         amount,
@@ -109,12 +119,19 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
   const handleSaveRecipe = () => {
     if (!recipeName.trim() || ingredients.length === 0) return;
 
+    const finalIngredients: RecipeIngredient[] = ingredients.map((ing) => ({
+      foodItem: ing.foodItem,
+      amount: typeof ing.amount === 'number' ? ing.amount : parseFloat(ing.amount) || 100,
+      unit: ing.unit,
+      gramWeight: ing.gramWeight,
+    }));
+
     const newRecipe: Recipe = {
       id: `recipe_${Date.now()}`,
       name: recipeName.trim(),
       description: description.trim(),
       servings: servCount,
-      ingredients,
+      ingredients: finalIngredients,
       totalWeightG: roundMacro(totalWeightG),
       totalCalories: roundCalories(totalCalories),
       totalProtein: roundMacro(totalProtein),
@@ -184,7 +201,8 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
                   type="number"
                   min="1"
                   value={servings}
-                  onChange={(e) => setServings(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  onChange={(e) => setServings(e.target.value)}
+                  placeholder="2"
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm font-bold text-white text-center focus:outline-hidden focus:border-indigo-500"
                 />
               </div>
@@ -268,11 +286,13 @@ export const RecipeBuilderModal: React.FC<RecipeBuilderModalProps> = ({
                     <div className="flex items-center gap-1.5 mt-1">
                       <input
                         type="number"
-                        min="1"
+                        min="0.1"
+                        step="any"
                         value={ing.amount}
                         onChange={(e) =>
-                          handleUpdateIngredient(idx, parseFloat(e.target.value) || 0, ing.unit)
+                          handleUpdateIngredient(idx, e.target.value, ing.unit)
                         }
+                        placeholder="100"
                         className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-0.5 text-xs text-white text-center"
                       />
                       <select

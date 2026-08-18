@@ -3,6 +3,9 @@ name: Build Unsigned iOS IPA
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -16,6 +19,8 @@ jobs:
           node-version: 22
 
       - name: Build Web App and Generate Assets
+        env:
+          VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
         run: |
           TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
           cd "$TARGET_DIR"
@@ -68,3 +73,15 @@ jobs:
         with:
           name: MacroPulse-Unsigned-IPA
           path: "**/build/MacroPulse.ipa"
+
+      - name: Publish GitHub Release (for apps.json downloadURL)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
+          IPA_PATH="$TARGET_DIR/build/MacroPulse.ipa"
+
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest "$IPA_PATH" \
+            --title "MacroPulse (latest unsigned build)" \
+            --notes "Automated unsigned build from commit ${GITHUB_SHA::7} on $(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -19,6 +19,8 @@ import { getCustomFoods } from './foodDatabase';
 const STORAGE_LOGS_KEY = 'macropulse_meal_logs_v1';
 const STORAGE_WATER_KEY = 'macropulse_water_logs_v1';
 const STORAGE_PROFILE_KEY = 'macropulse_user_profile_v1';
+const STORAGE_PROFILES_LIST_KEY = 'macropulse_profiles_list_v1';
+const STORAGE_ACTIVE_PROFILE_ID_KEY = 'macropulse_active_profile_id_v1';
 const STORAGE_QUEUE_KEY = 'macropulse_sync_queue_v1';
 const STORAGE_RECIPES_KEY = 'macropulse_recipes_v1';
 const STORAGE_CUSTOM_FOODS_KEY = 'macropulse_custom_foods_v1';
@@ -41,12 +43,23 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   id: 'usr_local_athlete_01',
   name: 'Alex Rivera',
   email: 'athlete@macropulse.app',
+  avatarColor: '#facc15',
+  avatarInitials: 'AR',
+  notes: 'Primary Athlete Profile',
+  isDefault: true,
   age: 26,
   gender: 'male',
   heightCm: 178,
   weightKg: 78,
   activityLevel: 'moderate',
   goalType: 'cut',
+  weightObjective: {
+    targetWeightKg: 73,
+    paceKgPerWeek: 0.5,
+    mode: 'pace',
+    deficitStrategy: 'standard',
+    preserveMuscleHighProtein: true,
+  },
   bmr: 1775,
   tdee: 2750,
   targetCalories: 2200,
@@ -400,18 +413,69 @@ class SyncEngine {
     };
   }
 
-  // --- USER PROFILE & GOALS ---
+  // --- USER PROFILES & MULTI-USER MANAGEMENT ---
+  public getAllProfiles(): UserProfile[] {
+    try {
+      const rawList = localStorage.getItem(STORAGE_PROFILES_LIST_KEY);
+      if (rawList) {
+        const parsed = JSON.parse(rawList);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+
+      // Migrate existing single profile if available
+      const legacyRaw = localStorage.getItem(STORAGE_PROFILE_KEY);
+      const initialProfile = legacyRaw ? { ...DEFAULT_USER_PROFILE, ...JSON.parse(legacyRaw) } : DEFAULT_USER_PROFILE;
+      const initialList = [initialProfile];
+      localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(initialList));
+      localStorage.setItem(STORAGE_ACTIVE_PROFILE_ID_KEY, initialProfile.id);
+      return initialList;
+    } catch {
+      return [DEFAULT_USER_PROFILE];
+    }
+  }
+
+  public getActiveProfileId(): string {
+    try {
+      const activeId = localStorage.getItem(STORAGE_ACTIVE_PROFILE_ID_KEY);
+      if (activeId) return activeId;
+      const profiles = this.getAllProfiles();
+      return profiles[0]?.id || DEFAULT_USER_PROFILE.id;
+    } catch {
+      return DEFAULT_USER_PROFILE.id;
+    }
+  }
+
   public getUserProfile(): UserProfile {
     try {
-      const raw = localStorage.getItem(STORAGE_PROFILE_KEY);
-      if (!raw) {
-        localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(DEFAULT_USER_PROFILE));
-        return DEFAULT_USER_PROFILE;
+      const profiles = this.getAllProfiles();
+      const activeId = this.getActiveProfileId();
+      const match = profiles.find((p) => p.id === activeId);
+      if (match) {
+        // Sync single storage profile cache
+        localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(match));
+        return match;
       }
-      return { ...DEFAULT_USER_PROFILE, ...JSON.parse(raw) };
+      if (profiles.length > 0) {
+        this.setActiveProfile(profiles[0].id);
+        return profiles[0];
+      }
+      return DEFAULT_USER_PROFILE;
     } catch {
       return DEFAULT_USER_PROFILE;
     }
+  }
+
+  public setActiveProfile(profileId: string): UserProfile {
+    const profiles = this.getAllProfiles();
+    const target = profiles.find((p) => p.id === profileId);
+    if (!target) return this.getUserProfile();
+
+    localStorage.setItem(STORAGE_ACTIVE_PROFILE_ID_KEY, target.id);
+    localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(target));
+    this.notifyListeners();
+    return target;
   }
 
   public updateUserProfile(updates: Partial<UserProfile>): UserProfile {
@@ -445,9 +509,197 @@ class SyncEngine {
       if (!updates.targetWaterMl) updated.targetWaterMl = rec.targetWaterMl;
     }
 
+    // Auto-update initials if name changed and not explicitly provided
+    if (updates.name && (!updates.avatarInitials || updates.avatarInitials.trim() === '')) {
+      const initials = updates.name
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase();
+      updated.avatarInitials = initials || 'MP';
+    }
+
+    // Save to list
+    const profiles = this.getAllProfiles();
+    const index = profiles.findIndex((p) => p.id === updated.id);
+    if (index >= 0) {
+      profiles[index] = updated;
+    } else {
+      profiles.push(updated);
+    }
+
+    localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(profiles));
     localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(updated));
     this.enqueueAction('update', 'user_goals', updated);
+    this.notifyListeners();
     return updated;
+  }
+
+  public updateProfileById(profileId: string, updates: Partial<UserProfile>): UserProfile | null {
+    const profiles = this.getAllProfiles();
+    const index = profiles.findIndex((p) => p.id === profileId);
+    if (index === -1) return null;
+
+    const current = profiles[index];
+    const updated = { ...current, ...updates };
+
+    if (
+      updates.weightKg ||
+      updates.heightCm ||
+      updates.age ||
+      updates.gender ||
+      updates.activityLevel ||
+      updates.goalType
+    ) {
+      const bmr = calculateBMR(updated.gender, updated.weightKg, updated.heightCm, updated.age);
+      const tdee = calculateTDEE(bmr, updated.activityLevel);
+      const rec = calculateRecommendedMacros(
+        tdee,
+        updated.weightKg,
+        updated.goalType,
+        updated.customMacroDistribution
+      );
+
+      updated.bmr = bmr;
+      updated.tdee = tdee;
+      if (!updates.targetCalories) updated.targetCalories = rec.targetCalories;
+      if (!updates.targetProteinG) updated.targetProteinG = rec.targetProteinG;
+      if (!updates.targetCarbsG) updated.targetCarbsG = rec.targetCarbsG;
+      if (!updates.targetFatG) updated.targetFatG = rec.targetFatG;
+      if (!updates.targetFiberG) updated.targetFiberG = rec.targetFiberG;
+      if (!updates.targetWaterMl) updated.targetWaterMl = rec.targetWaterMl;
+    }
+
+    if (updates.name && (!updates.avatarInitials || updates.avatarInitials.trim() === '')) {
+      const initials = updates.name
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase();
+      updated.avatarInitials = initials || 'MP';
+    }
+
+    profiles[index] = updated;
+    localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(profiles));
+
+    if (this.getActiveProfileId() === profileId) {
+      localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(updated));
+    }
+
+    this.notifyListeners();
+    return updated;
+  }
+
+  public createProfile(
+    profileData: Partial<UserProfile> & { name: string },
+    switchImmediately: boolean = true
+  ): UserProfile {
+    const profiles = this.getAllProfiles();
+    const newId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const name = profileData.name.trim() || 'Athlete';
+    const initials = name
+      .split(' ')
+      .filter(Boolean)
+      .map((part) => part[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase() || 'MP';
+
+    const gender = profileData.gender || 'male';
+    const age = profileData.age || 25;
+    const heightCm = profileData.heightCm || 175;
+    const weightKg = profileData.weightKg || 75;
+    const activityLevel = profileData.activityLevel || 'moderate';
+    const goalType = profileData.goalType || 'cut';
+
+    const bmr = calculateBMR(gender, weightKg, heightCm, age);
+    const tdee = calculateTDEE(bmr, activityLevel);
+    const rec = calculateRecommendedMacros(tdee, weightKg, goalType);
+
+    const palette = ['#facc15', '#10b981', '#38bdf8', '#a855f7', '#f43f5e', '#fb923c', '#818cf8'];
+    const assignedColor = profileData.avatarColor || palette[profiles.length % palette.length];
+
+    const newProfile: UserProfile = {
+      id: newId,
+      name,
+      email: profileData.email || '',
+      avatarColor: assignedColor,
+      avatarInitials: profileData.avatarInitials || initials,
+      notes: profileData.notes || '',
+      isDefault: false,
+      age,
+      gender,
+      heightCm,
+      weightKg,
+      activityLevel,
+      goalType,
+      bmr,
+      tdee,
+      targetCalories: profileData.targetCalories || rec.targetCalories,
+      targetProteinG: profileData.targetProteinG || rec.targetProteinG,
+      targetCarbsG: profileData.targetCarbsG || rec.targetCarbsG,
+      targetFatG: profileData.targetFatG || rec.targetFatG,
+      targetFiberG: profileData.targetFiberG || rec.targetFiberG,
+      targetWaterMl: profileData.targetWaterMl || rec.targetWaterMl,
+      useHaptics: profileData.useHaptics !== undefined ? profileData.useHaptics : true,
+      useSound: profileData.useSound !== undefined ? profileData.useSound : true,
+      streakDays: 1,
+      lastLoggedDate: new Date().toISOString().split('T')[0],
+    };
+
+    profiles.push(newProfile);
+    localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(profiles));
+
+    if (switchImmediately) {
+      this.setActiveProfile(newId);
+    } else {
+      this.notifyListeners();
+    }
+
+    return newProfile;
+  }
+
+  public duplicateProfile(profileId: string, customName?: string): UserProfile | null {
+    const profiles = this.getAllProfiles();
+    const original = profiles.find((p) => p.id === profileId);
+    if (!original) return null;
+
+    const newName = customName || `${original.name} (Copy)`;
+    return this.createProfile(
+      {
+        ...original,
+        name: newName,
+        email: original.email,
+        avatarColor: original.avatarColor,
+        isDefault: false,
+        streakDays: 0,
+      },
+      true
+    );
+  }
+
+  public deleteProfile(profileId: string): boolean {
+    const profiles = this.getAllProfiles();
+    if (profiles.length <= 1) {
+      return false; // Keep at least one profile
+    }
+
+    const filtered = profiles.filter((p) => p.id !== profileId);
+    localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(filtered));
+
+    if (this.getActiveProfileId() === profileId) {
+      // Switch to first remaining
+      this.setActiveProfile(filtered[0].id);
+    } else {
+      this.notifyListeners();
+    }
+
+    return true;
   }
 
   private updateUserStreak(loggedDate: string) {
@@ -515,6 +767,8 @@ class SyncEngine {
       version: '2.0.0',
       exportedAt: new Date().toISOString(),
       profile: this.getUserProfile(),
+      profiles: this.getAllProfiles(),
+      activeProfileId: this.getActiveProfileId(),
       mealLogs: this.getAllMealLogs(),
       waterLogs: this.getWaterLogs(),
       recipes: this.getRecipes(),
@@ -633,6 +887,12 @@ class SyncEngine {
       const data = JSON.parse(jsonString);
 
       if (mode === 'replace') {
+        if (Array.isArray(data.profiles) && data.profiles.length > 0) {
+          localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(data.profiles));
+          if (data.activeProfileId) {
+            localStorage.setItem(STORAGE_ACTIVE_PROFILE_ID_KEY, data.activeProfileId);
+          }
+        }
         if (data.profile) localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(data.profile));
         if (Array.isArray(data.mealLogs)) localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(data.mealLogs));
         if (Array.isArray(data.waterLogs)) localStorage.setItem(STORAGE_WATER_KEY, JSON.stringify(data.waterLogs));
@@ -640,7 +900,13 @@ class SyncEngine {
         if (Array.isArray(data.customFoods)) localStorage.setItem(STORAGE_CUSTOM_FOODS_KEY, JSON.stringify(data.customFoods));
       } else {
         // Merge mode: append unique records by ID
-        if (data.profile) {
+        if (Array.isArray(data.profiles) && data.profiles.length > 0) {
+          const currentProfiles = this.getAllProfiles();
+          const existingProfIds = new Set(currentProfiles.map((p) => p.id));
+          const newProfs = data.profiles.filter((p: any) => !existingProfIds.has(p.id));
+          const mergedProfiles = [...currentProfiles, ...newProfs];
+          localStorage.setItem(STORAGE_PROFILES_LIST_KEY, JSON.stringify(mergedProfiles));
+        } else if (data.profile) {
           this.updateUserProfile(data.profile);
         }
 

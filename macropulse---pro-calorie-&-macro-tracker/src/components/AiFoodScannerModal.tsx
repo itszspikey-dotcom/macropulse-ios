@@ -15,6 +15,7 @@ import {
 import confetti from 'canvas-confetti';
 import { FoodItem, MealType } from '../types/nutrition';
 import { playSuccessChime, triggerHaptic } from '../services/audioFeedback';
+import { scanFoodImage } from '../services/geminiClient';
 
 interface AiFoodScannerModalProps {
   isOpen: boolean;
@@ -41,6 +42,7 @@ export const AiFoodScannerModal: React.FC<AiFoodScannerModalProps> = ({
   onBatchLogDetectedFoods,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraFallbackInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
 
@@ -51,20 +53,9 @@ export const AiFoodScannerModal: React.FC<AiFoodScannerModalProps> = ({
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleStartCamera = async () => {
-    try {
-      setErrorMessage(null);
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 } },
-      });
-      setStream(mediaStream);
-      setIsCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        await videoRef.current.play();
-      }
-    } catch (e: any) {
-      setErrorMessage('Could not open camera. You can upload a photo from your gallery instead.');
+  const triggerNativeCameraFallback = () => {
+    if (cameraFallbackInputRef.current) {
+      cameraFallbackInputRef.current.click();
     }
   };
 
@@ -73,7 +64,52 @@ export const AiFoodScannerModal: React.FC<AiFoodScannerModalProps> = ({
       stream.getTracks().forEach((track) => track.stop());
       setStream(null);
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setIsCameraActive(false);
+  };
+
+  const handleStartCamera = async () => {
+    try {
+      setErrorMessage(null);
+      handleStopCamera();
+
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        console.warn('getUserMedia not supported in this environment, falling back to native capture');
+        triggerNativeCameraFallback();
+        return;
+      }
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        audio: false,
+      });
+
+      setStream(mediaStream);
+      setIsCameraActive(true);
+
+      const videoElement = videoRef.current;
+      if (videoElement) {
+        videoElement.srcObject = mediaStream;
+        videoElement.setAttribute('playsinline', 'true');
+        videoElement.setAttribute('webkit-playsinline', 'true');
+        videoElement.muted = true;
+        videoElement.onloadedmetadata = () => {
+          if (videoRef.current) {
+            videoRef.current.play().catch(() => {});
+          }
+        };
+
+        if (videoElement.readyState >= 1) {
+          videoElement.play().catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      console.error('Camera start error on iOS:', e);
+      setErrorMessage('Could not open live stream in standalone mode. Opening native iOS camera...');
+      triggerNativeCameraFallback();
+    }
   };
 
   const handleCapturePhoto = () => {
@@ -111,26 +147,12 @@ export const AiFoodScannerModal: React.FC<AiFoodScannerModalProps> = ({
     setAiResult(null);
 
     try {
-      const response = await fetch('/api/ai/scan-food', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: base64Image,
-          mimeType: 'image/jpeg',
-          promptContext: contextPrompt,
-        }),
-      });
-
-      const data = await response.json();
-      if (data.success && data.data) {
-        setAiResult(data.data);
-        playSuccessChime();
-        triggerHaptic('success');
-      } else {
-        throw new Error(data.error || 'Failed to analyze meal');
-      }
+      const data = await scanFoodImage(base64Image, 'image/jpeg', contextPrompt);
+      setAiResult(data);
+      playSuccessChime();
+      triggerHaptic('success');
     } catch (err: any) {
-      console.warn('Backend AI recognition error, using smart fallback estimation:', err);
+      console.warn('Gemini AI recognition error, using smart fallback estimation:', err);
       // Smart offline / fallback analysis
       const fallbackResult = {
         meal_title: 'Nutritious Mixed Meal Plate',
@@ -274,44 +296,74 @@ export const AiFoodScannerModal: React.FC<AiFoodScannerModalProps> = ({
 
         {/* Content Body */}
         <div className="p-4 overflow-y-auto space-y-4 text-white flex-1">
+          {/* Native iOS Camera Fallback Input */}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            id="camera-fallback"
+            ref={cameraFallbackInputRef}
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          {/* Gallery Photo Upload Input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+
           {/* Camera / Upload Section */}
           {!imagePreview && !isCameraActive && (
-            <div className="grid grid-cols-2 gap-3 py-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 py-4">
               <button
-                onClick={handleStartCamera}
-                className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700 hover:border-teal-500/50 transition gap-2 text-center group cursor-pointer"
+                onClick={triggerNativeCameraFallback}
+                className="flex flex-col items-center justify-center p-5 rounded-2xl bg-gradient-to-b from-teal-500/20 to-teal-500/5 hover:from-teal-500/30 hover:to-teal-500/10 border border-teal-500/40 transition gap-2 text-center group cursor-pointer active:scale-95"
               >
-                <div className="p-3 rounded-full bg-teal-500/10 text-teal-400 group-hover:scale-110 transition">
+                <div className="p-3 rounded-full bg-teal-500/20 text-teal-300 group-hover:scale-110 transition">
                   <Camera className="w-6 h-6" />
                 </div>
-                <span className="text-xs font-bold text-slate-200">Take Photo</span>
-                <span className="text-[10px] text-slate-400">Open live camera</span>
+                <span className="text-xs font-bold text-teal-200">iOS Snap</span>
+                <span className="text-[10px] text-teal-400/80">Native iOS camera</span>
+              </button>
+
+              <button
+                onClick={handleStartCamera}
+                className="flex flex-col items-center justify-center p-5 rounded-2xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700 hover:border-teal-500/50 transition gap-2 text-center group cursor-pointer active:scale-95"
+              >
+                <div className="p-3 rounded-full bg-slate-700 text-slate-300 group-hover:scale-110 transition">
+                  <Camera className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-bold text-slate-200">Live View</span>
+                <span className="text-[10px] text-slate-400">Stream viewfinder</span>
               </button>
 
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700 hover:border-indigo-500/50 transition gap-2 text-center group cursor-pointer"
+                className="flex flex-col items-center justify-center p-5 rounded-2xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700 hover:border-indigo-500/50 transition gap-2 text-center group cursor-pointer active:scale-95"
               >
                 <div className="p-3 rounded-full bg-indigo-500/10 text-indigo-400 group-hover:scale-110 transition">
                   <Upload className="w-6 h-6" />
                 </div>
-                <span className="text-xs font-bold text-slate-200">Upload Image</span>
-                <span className="text-[10px] text-slate-400">From photo gallery</span>
+                <span className="text-xs font-bold text-slate-200">Photo Library</span>
+                <span className="text-[10px] text-slate-400">Upload existing photo</span>
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
             </div>
           )}
 
           {/* Active Camera View */}
           {isCameraActive && (
             <div className="relative rounded-2xl overflow-hidden bg-black aspect-4/3 flex items-center justify-center">
-              <video ref={videoRef} playsInline autoPlay muted className="w-full h-full object-cover" />
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                webkit-playsinline="true"
+                className="w-full h-full object-cover"
+              />
               <div className="absolute bottom-3 inset-x-0 flex items-center justify-center gap-4">
                 <button
                   onClick={handleStopCamera}

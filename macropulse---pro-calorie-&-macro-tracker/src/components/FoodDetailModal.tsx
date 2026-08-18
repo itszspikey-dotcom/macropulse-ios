@@ -53,7 +53,7 @@ export const FoodDetailModal: React.FC<FoodDetailModalProps> = ({
   if (!isOpen || !foodItem) return null;
 
   const [selectedMeal, setSelectedMeal] = useState<MealType>(initialMealType);
-  const [amount, setAmount] = useState<number>(
+  const [amount, setAmount] = useState<number | string>(
     editingLog ? editingLog.servingAmount : foodItem.defaultServingSize || 100
   );
   const [unit, setUnit] = useState<ServingUnit>(
@@ -77,7 +77,8 @@ export const FoodDetailModal: React.FC<FoodDetailModalProps> = ({
   }, [foodItem, editingLog, initialMealType]);
 
   // Strict dynamic portion calculations
-  const computed = computeNutritionForPortion(foodItem, Number(amount) || 0, unit);
+  const parsedAmt = parseFloat(amount.toString()) || 0;
+  const computed = computeNutritionForPortion(foodItem, parsedAmt, unit);
 
   // Macro Energy Percentages
   const pCal = computed.protein * 4;
@@ -109,12 +110,12 @@ export const FoodDetailModal: React.FC<FoodDetailModalProps> = ({
   };
 
   const handleSave = () => {
-    if (amount <= 0) return;
+    if (parsedAmt <= 0) return;
 
     onSaveLog({
       foodItem,
       mealType: selectedMeal,
-      servingAmount: Number(amount),
+      servingAmount: parsedAmt,
       servingUnit: unit,
       servingGramWeight: computed.servingGramWeight,
       calories: computed.calories,
@@ -211,7 +212,8 @@ export const FoodDetailModal: React.FC<FoodDetailModalProps> = ({
                   min="0.1"
                   step="any"
                   value={amount}
-                  onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="100"
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-base font-bold text-white text-center focus:outline-hidden focus:border-emerald-500"
                 />
               </div>

@@ -108,16 +108,34 @@ export interface DailySummary {
   loggedItems: LoggedFood[];
 }
 
+export interface WeightObjective {
+  targetWeightKg: number;
+  paceKgPerWeek: number; // e.g. 0.25, 0.5, 0.75, 1.0 kg/week
+  mode: 'pace' | 'target_date';
+  targetDate?: string; // YYYY-MM-DD
+  startDate?: string;
+  startWeightKg?: number;
+  deficitStrategy?: 'gentle' | 'standard' | 'aggressive' | 'custom';
+  preserveMuscleHighProtein?: boolean;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
   email?: string;
+  avatarColor?: string;
+  avatarInitials?: string;
+  notes?: string;
+  isDefault?: boolean;
   age: number;
   gender: 'male' | 'female' | 'other';
   heightCm: number;
   weightKg: number;
   activityLevel: 'sedentary' | 'light' | 'moderate' | 'very_active' | 'extra_active';
   goalType: 'cut' | 'maintain' | 'bulk' | 'keto' | 'custom';
+  weightObjective?: WeightObjective;
+  themeId?: string;
+  layoutMode?: 'command-dock' | 'top-nav-grid' | 'focus-dial' | 'split-workspace' | 'dense-hud';
   customMacroDistribution?: {
     proteinPct: number;
     carbsPct: number;

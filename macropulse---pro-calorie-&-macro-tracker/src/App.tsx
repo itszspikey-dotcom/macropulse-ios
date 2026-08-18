@@ -19,10 +19,15 @@ import { FoodDetailModal } from './components/FoodDetailModal';
 import { QuickAddModal } from './components/QuickAddModal';
 import { RecipeBuilderModal } from './components/RecipeBuilderModal';
 import { GoalsAndTdeeModal } from './components/GoalsAndTdeeModal';
+import { WeightObjectiveModal } from './components/WeightObjectiveModal';
 import { DatabaseSchemaModal } from './components/DatabaseSchemaModal';
 import { AiNutritionAdvisorModal } from './components/AiNutritionAdvisorModal';
 import { DataManagementModal } from './components/DataManagementModal';
+import { ProfileManagementModal } from './components/ProfileManagementModal';
+import { ThemeSettingsModal } from './components/ThemeSettingsModal';
 import { AnalyticsView } from './components/AnalyticsView';
+import { LayoutRenderer } from './components/layouts/LayoutRenderer';
+import { layoutService, LayoutMode } from './services/layoutService';
 import { triggerHaptic } from './services/audioFeedback';
 
 export default function App() {
@@ -34,6 +39,12 @@ export default function App() {
   );
   const [userProfile, setUserProfile] = useState<UserProfile>(() =>
     syncEngine.getUserProfile()
+  );
+  const [allProfiles, setAllProfiles] = useState<UserProfile[]>(() =>
+    syncEngine.getAllProfiles()
+  );
+  const [currentLayout, setCurrentLayout] = useState<LayoutMode>(() =>
+    layoutService.getLayout()
   );
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
@@ -48,6 +59,10 @@ export default function App() {
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [isRecipeBuilderOpen, setIsRecipeBuilderOpen] = useState(false);
   const [isGoalsOpen, setIsGoalsOpen] = useState(false);
+  const [isWeightObjectiveOpen, setIsWeightObjectiveOpen] = useState(false);
+  const [isThemeOpen, setIsThemeOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileModalInitialTab, setProfileModalInitialTab] = useState<'list' | 'edit' | 'create'>('list');
   const [isSchemaOpen, setIsSchemaOpen] = useState(false);
   const [isAiAdvisorOpen, setIsAiAdvisorOpen] = useState(false);
   const [isDataManagementOpen, setIsDataManagementOpen] = useState(false);
@@ -56,13 +71,19 @@ export default function App() {
   const [selectedFoodItem, setSelectedFoodItem] = useState<FoodItem | null>(null);
   const [editingLogItem, setEditingLogItem] = useState<LoggedFood | null>(null);
 
-  // Subscribe to sync engine status
+  // Subscribe to sync engine status & layout service
   useEffect(() => {
-    const unsubscribe = syncEngine.subscribe((online, count) => {
+    const unsubSync = syncEngine.subscribe((online, count) => {
       setIsOnline(online);
       setPendingSyncCount(count);
     });
-    return unsubscribe;
+    const unsubLayout = layoutService.subscribe((l) => {
+      setCurrentLayout(l);
+    });
+    return () => {
+      unsubSync();
+      unsubLayout();
+    };
   }, []);
 
   // Reload daily summary whenever date changes
@@ -73,6 +94,31 @@ export default function App() {
   const refreshDailyData = () => {
     setDailySummary(syncEngine.getDailySummary(currentDate));
     setUserProfile(syncEngine.getUserProfile());
+    setAllProfiles(syncEngine.getAllProfiles());
+  };
+
+  const handleOpenProfileModal = (tab: 'list' | 'edit' | 'create' = 'list') => {
+    setProfileModalInitialTab(tab);
+    setIsProfileModalOpen(true);
+    triggerHaptic('light');
+  };
+
+  const handleSwitchProfile = (newProfile: UserProfile) => {
+    setUserProfile(newProfile);
+    if (newProfile.layoutMode) {
+      layoutService.setLayout(newProfile.layoutMode);
+    }
+    setAllProfiles(syncEngine.getAllProfiles());
+    setDailySummary(syncEngine.getDailySummary(currentDate));
+  };
+
+  const handleProfileUpdated = (updated: UserProfile) => {
+    setUserProfile(updated);
+    if (updated.layoutMode) {
+      layoutService.setLayout(updated.layoutMode);
+    }
+    setAllProfiles(syncEngine.getAllProfiles());
+    setDailySummary(syncEngine.getDailySummary(currentDate));
   };
 
   // Handlers for logging
@@ -281,139 +327,53 @@ export default function App() {
     refreshDailyData();
   };
 
-  // Group logged foods by meal
-  const breakfastItems = dailySummary.loggedItems.filter((i) => i.mealType === 'breakfast');
-  const lunchItems = dailySummary.loggedItems.filter((i) => i.mealType === 'lunch');
-  const dinnerItems = dailySummary.loggedItems.filter((i) => i.mealType === 'dinner');
-  const snackItems = dailySummary.loggedItems.filter((i) => i.mealType === 'snack');
-
   return (
     <div className="flex h-screen w-full bg-[#0b0b0c] text-white font-geist overflow-hidden relative select-none">
-      {/* Ambient Radial Gradient Glows */}
-      <div className="ambient-bg" />
-
-      {/* Left Navigation Bar */}
-      <SidebarRail
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onOpenAiAdvisor={() => setIsAiAdvisorOpen(true)}
-        onOpenRecipeBuilder={() => setIsRecipeBuilderOpen(true)}
-        onOpenSchemaModal={() => setIsSchemaOpen(true)}
-        onOpenGoalsModal={() => setIsGoalsOpen(true)}
-        onOpenDataManagement={handleOpenDataManagement}
+      {/* Dynamic Structural Layout Renderer */}
+      <LayoutRenderer
+        layoutMode={currentLayout}
+        currentDate={currentDate}
+        onDateChange={setCurrentDate}
+        userProfile={userProfile}
+        dailySummary={dailySummary}
+        allProfiles={allProfiles}
+        onSwitchProfile={handleSwitchProfile}
         isOnline={isOnline}
         pendingSyncCount={pendingSyncCount}
-        userProfile={userProfile}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onOpenSearch={handleOpenSearch}
+        onOpenBarcode={handleOpenBarcode}
+        onOpenAiScan={handleOpenAiScan}
+        onOpenQuickAdd={handleOpenQuickAdd}
+        onEditItem={handleEditLoggedItem}
+        onDeleteItem={handleDeleteMealLog}
+        onOpenProfileModal={() => handleOpenProfileModal('list')}
+        onOpenWeightObjectiveModal={() => setIsWeightObjectiveOpen(true)}
+        onOpenGoalsModal={() => setIsGoalsOpen(true)}
+        onOpenThemeModal={() => setIsThemeOpen(true)}
+        onOpenAiAdvisor={() => setIsAiAdvisorOpen(true)}
+        onOpenRecipeBuilder={() => setIsRecipeBuilderOpen(true)}
+        onOpenDataManagement={handleOpenDataManagement}
+        onOpenSchemaModal={() => setIsSchemaOpen(true)}
+        onAddWater={handleAddWater}
+        onResetWater={handleResetWater}
       />
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-10">
-        {/* Top Header */}
-        <Header
-          currentDate={currentDate}
-          onDateChange={setCurrentDate}
-          userProfile={userProfile}
-          dailySummary={dailySummary}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          onOpenSearch={() => handleOpenSearch('breakfast')}
-          onOpenBarcode={() => handleOpenBarcode('breakfast')}
-          onOpenAiScan={() => handleOpenAiScan('breakfast')}
-          onOpenQuickAdd={() => handleOpenQuickAdd('breakfast')}
-          onOpenDataManagement={handleOpenDataManagement}
-        />
-
-        {/* Scrollable Main Area */}
-        <main className="flex-1 overflow-y-auto px-6 md:px-12 py-8">
-          <div className="max-w-7xl mx-auto space-y-8 pb-16">
-            {activeTab === 'tracker' ? (
-              <>
-                {/* Calorie Ring & Macro Cards Grid */}
-                <MacroDashboard
-                  summary={dailySummary}
-                  userProfile={userProfile}
-                  onAddWater={handleAddWater}
-                  onResetWater={handleResetWater}
-                  onOpenGoalsModal={() => setIsGoalsOpen(true)}
-                />
-
-                {/* Logged Meal Activity List */}
-                <div className="space-y-4 pt-4">
-                  <div className="flex items-center justify-between font-mono-meta text-xs text-white/40">
-                    <span>Logged Activity</span>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => handleOpenQuickAdd('breakfast')}
-                        className="text-[#facc15] hover:underline cursor-pointer"
-                      >
-                        + Quick Add
-                      </button>
-                      <span>•</span>
-                      <button
-                        onClick={() => setIsRecipeBuilderOpen(true)}
-                        className="text-white/60 hover:text-white cursor-pointer"
-                      >
-                        Recipe Builder
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <MealSection
-                      mealType="breakfast"
-                      items={breakfastItems}
-                      onOpenSearch={handleOpenSearch}
-                      onOpenBarcode={handleOpenBarcode}
-                      onOpenAiScan={handleOpenAiScan}
-                      onOpenQuickAdd={handleOpenQuickAdd}
-                      onEditItem={handleEditLoggedItem}
-                      onDeleteItem={handleDeleteMealLog}
-                    />
-
-                    <MealSection
-                      mealType="lunch"
-                      items={lunchItems}
-                      onOpenSearch={handleOpenSearch}
-                      onOpenBarcode={handleOpenBarcode}
-                      onOpenAiScan={handleOpenAiScan}
-                      onOpenQuickAdd={handleOpenQuickAdd}
-                      onEditItem={handleEditLoggedItem}
-                      onDeleteItem={handleDeleteMealLog}
-                    />
-
-                    <MealSection
-                      mealType="dinner"
-                      items={dinnerItems}
-                      onOpenSearch={handleOpenSearch}
-                      onOpenBarcode={handleOpenBarcode}
-                      onOpenAiScan={handleOpenAiScan}
-                      onOpenQuickAdd={handleOpenQuickAdd}
-                      onEditItem={handleEditLoggedItem}
-                      onDeleteItem={handleDeleteMealLog}
-                    />
-
-                    <MealSection
-                      mealType="snack"
-                      items={snackItems}
-                      onOpenSearch={handleOpenSearch}
-                      onOpenBarcode={handleOpenBarcode}
-                      onOpenAiScan={handleOpenAiScan}
-                      onOpenQuickAdd={handleOpenQuickAdd}
-                      onEditItem={handleEditLoggedItem}
-                      onDeleteItem={handleDeleteMealLog}
-                    />
-                  </div>
-                </div>
-              </>
-            ) : (
-              /* Performance Analytics */
-              <AnalyticsView userProfile={userProfile} />
-            )}
-          </div>
-        </main>
-      </div>
-
       {/* Modals & Overlays */}
+      <ProfileManagementModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        userProfile={userProfile}
+        onProfileSwitched={handleSwitchProfile}
+        onProfileUpdated={handleProfileUpdated}
+        initialTab={profileModalInitialTab}
+        onOpenWeightObjectiveModal={() => {
+          setIsProfileModalOpen(false);
+          setIsWeightObjectiveOpen(true);
+        }}
+      />
+
       <DataManagementModal
         isOpen={isDataManagementOpen}
         onClose={() => setIsDataManagementOpen(false)}
@@ -425,6 +385,7 @@ export default function App() {
         onClose={() => setIsBarcodeOpen(false)}
         mealType={activeMealType}
         onProductFound={handleProductFoundFromBarcode}
+        onProfileUpdated={refreshDailyData}
       />
 
       <AiFoodScannerModal
@@ -477,6 +438,29 @@ export default function App() {
         onClose={() => setIsGoalsOpen(false)}
         userProfile={userProfile}
         onSaveProfile={handleSaveProfile}
+        onOpenProfileManager={() => handleOpenProfileModal('list')}
+        onOpenWeightObjective={() => {
+          setIsGoalsOpen(false);
+          setIsWeightObjectiveOpen(true);
+        }}
+        onOpenThemeModal={() => {
+          setIsGoalsOpen(false);
+          setIsThemeOpen(true);
+        }}
+      />
+
+      <ThemeSettingsModal
+        isOpen={isThemeOpen}
+        onClose={() => setIsThemeOpen(false)}
+        userProfile={userProfile}
+        onUpdateProfile={handleSaveProfile}
+      />
+
+      <WeightObjectiveModal
+        isOpen={isWeightObjectiveOpen}
+        onClose={() => setIsWeightObjectiveOpen(false)}
+        userProfile={userProfile}
+        onSaveObjective={handleSaveProfile}
       />
 
       <DatabaseSchemaModal

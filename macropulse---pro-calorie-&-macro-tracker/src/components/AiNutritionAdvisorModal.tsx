@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { DailySummary, MacroGoals, UserProfile } from '../types/nutrition';
 import { playSuccessChime, triggerHaptic } from '../services/audioFeedback';
+import { getNutritionAdvice } from '../services/geminiClient';
 
 interface AiNutritionAdvisorModalProps {
   isOpen: boolean;
@@ -58,35 +59,30 @@ export const AiNutritionAdvisorModal: React.FC<AiNutritionAdvisorModalProps> = (
     triggerHaptic('light');
 
     try {
-      const response = await fetch('/api/ai/nutrition-advisor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: text,
-          dailySummary,
-          macroGoals: {
-            calories: userProfile.targetCalories,
-            protein: userProfile.targetProteinG,
-            carbs: userProfile.targetCarbsG,
-            fat: userProfile.targetFatG,
-            fiber: userProfile.targetFiberG,
-          },
-          userProfile: {
-            goalType: userProfile.goalType,
-            weightKg: userProfile.weightKg,
-            heightCm: userProfile.heightCm,
-            activityLevel: userProfile.activityLevel,
-          },
-        }),
-      });
+      const answer = await getNutritionAdvice(
+        text,
+        dailySummary,
+        {
+          calories: userProfile.targetCalories,
+          protein: userProfile.targetProteinG,
+          carbs: userProfile.targetCarbsG,
+          fat: userProfile.targetFatG,
+          fiber: userProfile.targetFiberG,
+        },
+        {
+          goalType: userProfile.goalType,
+          weightKg: userProfile.weightKg,
+          heightCm: userProfile.heightCm,
+          activityLevel: userProfile.activityLevel,
+        }
+      );
 
-      const data = await response.json();
-      if (data.success && data.answer) {
-        setMessages((prev) => [...prev, { role: 'assistant', text: data.answer }]);
+      if (answer) {
+        setMessages((prev) => [...prev, { role: 'assistant', text: answer }]);
         playSuccessChime();
         triggerHaptic('success');
       } else {
-        throw new Error(data.error || 'Failed to get answer');
+        throw new Error('Failed to get answer');
       }
     } catch (e: any) {
       // Local intelligent response fallback
