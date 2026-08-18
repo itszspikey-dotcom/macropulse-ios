@@ -133,20 +133,21 @@ Guidelines:
 2. Structure answers with clean markdown headings (###, ####), bullet points, and highlight calories & macros in bold.
 3. Be conversational, motivating, and dynamic across multiple questions without repeating identical canned responses.`;
 
-  // Mirrors the original server.ts contract exactly: `history` already ends with
-  // the user's latest message (the modal sends `updatedMessages`), and the server
-  // appended `query` again as a trailing user turn on top of that. Kept as-is for
-  // behavioral parity rather than "fixing" possibly-intentional duplication.
-  let contentsPayload: any[];
-  if (Array.isArray(history) && history.length > 0) {
-    contentsPayload = history.slice(-6).map((msg) => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.text }],
-    }));
-    contentsPayload.push({ role: 'user', parts: [{ text: query }] });
-  } else {
-    contentsPayload = [{ role: 'user', parts: [{ text: query }] }];
-  }
+  // `history` already ends with the user's current message (the modal sends
+  // `updatedMessages`, which includes it). The original server.ts pushed `query`
+  // again on top of that, producing two consecutive user-role turns on every single
+  // message — malformed multi-turn structure that can degrade answer quality or
+  // trigger API errors, which in turn fires the local canned-script fallback more
+  // often than it should. Fixed here: use `history` as-is, don't duplicate the
+  // trailing turn. (The same fix should land in MacroPulse-X's server.ts too, for
+  // the web build — see the AI Studio prompt.)
+  const contentsPayload: any[] =
+    Array.isArray(history) && history.length > 0
+      ? history.slice(-6).map((msg) => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.text }],
+        }))
+      : [{ role: 'user', parts: [{ text: query }] }];
 
   return callGemini(contentsPayload, { systemInstruction });
 }
