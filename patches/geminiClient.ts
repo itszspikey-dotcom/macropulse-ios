@@ -3,22 +3,27 @@
 // app bundle at build time via VITE_GEMINI_API_KEY — acceptable for a personal
 // sideload, but note it is extractable by anyone who inspects the compiled app.
 
+import type { ChatMessage } from './aiAdvisorService';
+
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-3.7-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-async function callGemini(contents: any[], responseMimeType?: string): Promise<string> {
+async function callGemini(contents: any[], opts?: { responseMimeType?: string; systemInstruction?: string }): Promise<string> {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing Gemini API key. Set VITE_GEMINI_API_KEY in .env.local before building.');
   }
 
+  const body: any = { contents };
+  const config: any = {};
+  if (opts?.responseMimeType) config.responseMimeType = opts.responseMimeType;
+  if (opts?.systemInstruction) config.systemInstruction = opts.systemInstruction;
+  if (Object.keys(config).length > 0) body.generationConfig = config;
+
   const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents,
-      ...(responseMimeType ? { generationConfig: { responseMimeType } } : {}),
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -92,7 +97,7 @@ Return STRICT JSON in the following exact schema:
         parts: [{ inlineData: { mimeType, data: base64Data } }, { text: prompt }],
       },
     ],
-    'application/json'
+    { responseMimeType: 'application/json' }
   );
 
   const responseText = text || '{}';
@@ -106,19 +111,42 @@ Return STRICT JSON in the following exact schema:
 
 export async function getNutritionAdvice(
   query: string,
+  history: ChatMessage[],
   dailySummary: any,
   macroGoals: any,
   userProfile: any
 ): Promise<string> {
-  const prompt = `You are MacroPulse AI, an elite sports nutritionist and registered dietitian.
-User Context:
-- Target Goals: ${JSON.stringify(macroGoals || {})}
-- Consumed Today: ${JSON.stringify(dailySummary || {})}
-- User Profile: ${JSON.stringify(userProfile || {})}
+  const systemInstruction = `You are MacroPulse AI, an elite sports nutritionist, registered dietitian, and athletic performance coach.
+Your mission is to provide personalized, mathematically accurate, evidence-based nutritional guidance.
 
-User Question/Request: "${query}"
+Current User Profile & Goal:
+- User: ${userProfile?.name || 'Athlete'}
+- Goal: ${(userProfile?.goalType || 'maintain').toUpperCase()} (Weight: ${userProfile?.weightKg || 70}kg, Height: ${userProfile?.heightCm || 175}cm, Activity: ${userProfile?.activityLevel || 'moderate'})
+- Daily Calorie Target: ${macroGoals?.calories || 2000} kcal (Consumed: ${dailySummary?.calories || 0} kcal | Remaining: ${Math.max(0, (macroGoals?.calories || 2000) - (dailySummary?.calories || 0))} kcal)
+- Daily Protein Target: ${macroGoals?.protein || 150}g (Consumed: ${dailySummary?.protein || 0}g | Remaining: ${Math.max(0, (macroGoals?.protein || 150) - (dailySummary?.protein || 0))}g)
+- Daily Carbs Target: ${macroGoals?.carbs || 200}g (Consumed: ${dailySummary?.carbs || 0}g | Remaining: ${Math.max(0, (macroGoals?.carbs || 200) - (dailySummary?.carbs || 0))}g)
+- Daily Fat Target: ${macroGoals?.fat || 60}g (Consumed: ${dailySummary?.fat || 0}g | Remaining: ${Math.max(0, (macroGoals?.fat || 60) - (dailySummary?.fat || 0))}g)
+- Daily Fiber Target: ${macroGoals?.fiber || 28}g (Consumed: ${dailySummary?.fiber || 0}g)
 
-Provide actionable, mathematically sound nutritional guidance, suggested foods with exact gram portions to hit remaining macros, or recipe advice. Keep it concise, motivating, and highly structured with bullet points.`;
+Guidelines:
+1. Always address the user's specific question directly with varied, actionable food options, realistic portion weights in grams, and exact calculated macros.
+2. Structure answers with clean markdown headings (###, ####), bullet points, and highlight calories & macros in bold.
+3. Be conversational, motivating, and dynamic across multiple questions without repeating identical canned responses.`;
 
-  return callGemini([{ role: 'user', parts: [{ text: prompt }] }]);
+  // Mirrors the original server.ts contract exactly: `history` already ends with
+  // the user's latest message (the modal sends `updatedMessages`), and the server
+  // appended `query` again as a trailing user turn on top of that. Kept as-is for
+  // behavioral parity rather than "fixing" possibly-intentional duplication.
+  let contentsPayload: any[];
+  if (Array.isArray(history) && history.length > 0) {
+    contentsPayload = history.slice(-6).map((msg) => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.text }],
+    }));
+    contentsPayload.push({ role: 'user', parts: [{ text: query }] });
+  } else {
+    contentsPayload = [{ role: 'user', parts: [{ text: query }] }];
+  }
+
+  return callGemini(contentsPayload, { systemInstruction });
 }

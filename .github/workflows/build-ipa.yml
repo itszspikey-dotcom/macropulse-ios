@@ -1,48 +1,99 @@
-name: Build Unsigned iOS IPA
+name: Poll MacroPulse-X and Build Unsigned IPA
+
+# MacroPulse-X (github.com/itszspikey-dotcom/MacroPulse-X) is synced directly from
+# Google AI Studio. AI Studio's "commit and push" does a full mirror overwrite of that
+# repo's tree, discarding anything it doesn't recognize as its own — so a CI workflow,
+# Capacitor config, or patched source file committed there gets wiped on the next sync.
+#
+# This repo solves that by never touching MacroPulse-X's tree at all: it polls
+# MacroPulse-X's latest commit on a cheap runner, and only when it changes, spins up a
+# macOS runner that clones MacroPulse-X fresh into a throwaway workspace, layers the
+# Capacitor project + Gemini fetch-shim on top of that clone (from patches/ below),
+# builds, and publishes — without ever writing back to MacroPulse-X.
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      new_commit: ${{ steps.check.outputs.new_commit }}
+      latest_sha: ${{ steps.check.outputs.latest_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        run: |
+          set -euo pipefail
+          LATEST_SHA=$(curl -sf https://api.github.com/repos/itszspikey-dotcom/MacroPulse-X/commits/main | jq -r .sha)
+          LAST_BUILT=$(cat .last-built-sha 2>/dev/null || echo "none")
+          echo "Latest MacroPulse-X commit: $LATEST_SHA"
+          echo "Last built commit:          $LAST_BUILT"
+          echo "latest_sha=$LATEST_SHA" >> "$GITHUB_OUTPUT"
+          if [ -n "$LATEST_SHA" ] && [ "$LATEST_SHA" != "null" ] && [ "$LATEST_SHA" != "$LAST_BUILT" ]; then
+            echo "new_commit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "new_commit=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.new_commit == 'true'
     runs-on: macos-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout builder repo (patches, config, apps.json)
         uses: actions/checkout@v4
+        with:
+          path: builder
+
+      - name: Checkout fresh MacroPulse-X source
+        uses: actions/checkout@v4
+        with:
+          repository: itszspikey-dotcom/MacroPulse-X
+          ref: main
+          path: source
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Build Web App and Generate Assets
+      - name: Layer Capacitor + Gemini fetch-shim onto the fresh AI Studio source
+        run: |
+          set -euo pipefail
+          cp builder/patches/geminiClient.ts source/src/services/geminiClient.ts
+          cp builder/patches/geminiFetchShim.ts source/src/geminiFetchShim.ts
+          # source/ is a fresh clone every run, so no idempotency concerns here.
+          { echo "import './geminiFetchShim';"; cat source/src/main.tsx; } > source/src/main.tsx.tmp
+          mv source/src/main.tsx.tmp source/src/main.tsx
+          cp builder/capacitor.config.json source/capacitor.config.json
+          cp builder/icon.png source/icon.png
+
+      - name: Build Web App and Generate iOS Project
+        working-directory: source
         env:
           VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
         run: |
-          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
-          cd "$TARGET_DIR"
-          echo "Working in directory: $(pwd)"
-
-          # 1. Build Web Assets
+          set -euo pipefail
           npm install
           npm run build
 
-          # 2. Add Capacitor iOS
           npm install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/assets
           npx cap add ios
 
-          # 2b. Add required privacy usage descriptions. Without these, iOS hard-crashes
-          # the app the instant it touches camera/photo-library APIs (used by the
-          # barcode scanner and AI food scanner) — Capacitor's default Info.plist
-          # template doesn't include them.
+          # Required privacy usage descriptions. Without these, iOS hard-crashes the
+          # app the instant it touches camera/photo-library APIs (barcode scanner,
+          # AI food scanner) — Capacitor's default Info.plist template omits them.
           PLIST="ios/App/App/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'MacroPulse needs camera access to scan barcodes and recognize meals for calorie tracking.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'MacroPulse needs photo library access so you can select meal photos for AI food recognition.'" "$PLIST"
 
-          # 3. Auto-generate iOS app icons from icon.png if present
           if [ -f "icon.png" ]; then
             mkdir -p assets
             cp icon.png assets/icon-only.png
@@ -52,10 +103,8 @@ jobs:
           npx cap sync ios
 
       - name: Compile Xcode Archive
+        working-directory: source
         run: |
-          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
-          cd "$TARGET_DIR"
-
           xcodebuild archive \
             -project ios/App/App.xcodeproj \
             -scheme App \
@@ -67,10 +116,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Package to IPA
+        working-directory: source
         run: |
-          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
-          cd "$TARGET_DIR"
-
           mkdir -p build/Payload
           cp -r build/App.xcarchive/Products/Applications/App.app build/Payload/
           cd build
@@ -80,16 +127,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MacroPulse-Unsigned-IPA
-          path: "**/build/MacroPulse.ipa"
+          path: source/build/MacroPulse.ipa
 
       - name: Publish GitHub Release (for apps.json downloadURL)
+        working-directory: builder
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TARGET_DIR=$(find . -maxdepth 2 -name "package.json" -not -path "*/.*" -exec dirname {} \;)
-          IPA_PATH="$TARGET_DIR/build/MacroPulse.ipa"
-
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest "$IPA_PATH" \
+          gh release create latest ../source/build/MacroPulse.ipa \
             --title "MacroPulse (latest unsigned build)" \
-            --notes "Automated unsigned build from commit ${GITHUB_SHA::7} on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --notes "Auto-built from MacroPulse-X@${{ needs.check.outputs.latest_sha }} on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Record last built commit SHA
+        working-directory: builder
+        run: |
+          echo "${{ needs.check.outputs.latest_sha }}" > .last-built-sha
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last-built-sha
+          git commit -m "Mark MacroPulse-X@${{ needs.check.outputs.latest_sha }} as built" || echo "Nothing to commit"
+          git push
