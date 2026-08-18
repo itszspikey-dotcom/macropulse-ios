@@ -1,0 +1,5 @@
+# Packages that MacroPulse-X's source imports but doesn't declare in package.json.
+# AI Studio's generated commits have twice now added imports without updating
+# dependencies (firebase was the first case, 2026-08-18). One package name per line;
+# installed before `npm run build` regardless of what's in the cloned package.json.
+firebase

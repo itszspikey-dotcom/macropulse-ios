@@ -33,6 +33,13 @@ Instead, this repo owns all of that, and never writes to MacroPulse-X:
   local-fallback code in each modal keeps the app from crashing — AI features just
   silently degrade to fallback data until this shim is updated to match.
 
+- `extra-deps.txt` — packages MacroPulse-X's source imports but doesn't declare in
+  `package.json` (AI Studio's generated commits have missed this before — `firebase`
+  was the first case). One package name per line; installed before `npm run build`
+  regardless of what's in the cloned `package.json`. If a build fails with a Rollup
+  "failed to resolve import" error, check whether the missing package needs adding
+  here.
+
 ## Required secret
 
 `VITE_GEMINI_API_KEY` (repo Settings → Secrets and variables → Actions) — baked into

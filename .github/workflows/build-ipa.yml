@@ -82,6 +82,18 @@ jobs:
         run: |
           set -euo pipefail
           npm install
+
+          # AI Studio's generated commits don't always declare every package the
+          # source actually imports (e.g. `firebase` was missing entirely). Install
+          # anything listed in extra-deps.txt regardless of what's in package.json.
+          if [ -f "../builder/patches/extra-deps.txt" ]; then
+            EXTRA_DEPS=$(grep -v '^#' ../builder/patches/extra-deps.txt | grep -v '^\s*$' | tr '\n' ' ')
+            if [ -n "$EXTRA_DEPS" ]; then
+              echo "Installing extra deps not declared in package.json: $EXTRA_DEPS"
+              npm install $EXTRA_DEPS
+            fi
+          fi
+
           npm run build
 
           npm install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/assets
